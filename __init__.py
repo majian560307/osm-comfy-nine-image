@@ -58,5 +58,48 @@ class OSMNineImageBranch:
         return tuple(out)
 
 
-NODE_CLASS_MAPPINGS = {"OSMNineImageBranch": OSMNineImageBranch}
-NODE_DISPLAY_NAME_MAPPINGS = {"OSMNineImageBranch": ("OSM 九图分发器 (9槽·空槽自动屏蔽)")}
+class OSMNineImageBranchInput(OSMNineImageBranch):
+    """连线模式：9 路 IMAGE 输入直连原生 LoadImage。
+    上游喂 1x1 黑图 = 该槽视为空 → 对应编号输出的下游整条分支屏蔽。"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        opt = {}
+        for i in range(1, N + 1):
+            opt[f"img_{i}"] = ("IMAGE", {"tooltip": f"槽位{i}：接原生 LoadImage；喂 1x1 黑图 = 空槽，下游分支自动屏蔽。"})
+        return {"required": {}, "optional": opt}
+
+    DESCRIPTION = "9 路 IMAGE 输入分发：1x1 黑图占位视为空槽，下游分支自动屏蔽。配合 RH/云端应用的必填原生 LoadImage 使用。"
+
+    @staticmethod
+    def _is_placeholder(img):
+        # 1x1 任意图，或 1x1 大小的任何像素 → 占位
+        if img is not None and img.ndim >= 2 and img.shape[-3] == 1 and img.shape[-2] == 1:
+            return True
+        # 宽容：小尺寸(<8px)且全黑的图也判占位
+        try:
+            if img is not None and img.numel() > 0 and img.numel() <= 8 * 8 * 3 and float(img.abs().max()) == 0.0:
+                return True
+        except Exception:
+            pass
+        return False
+
+    def dispatch(self, **kw):
+        out = []
+        for i in range(1, N + 1):
+            img = kw.get(f"img_{i}", None)
+            if img is None or self._is_placeholder(img):
+                out.append(ExecutionBlocker(f"槽位{i}为 1x1 黑图占位，分支屏蔽"))
+            else:
+                out.append(img)
+        return tuple(out)
+
+
+NODE_CLASS_MAPPINGS = {
+    "OSMNineImageBranch": OSMNineImageBranch,
+    "OSMNineImageBranchInput": OSMNineImageBranchInput,
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "OSMNineImageBranch": ("OSM 九图分发器 (9槽·空槽自动屏蔽)"),
+    "OSMNineImageBranchInput": ("OSM 九图分发器·连线版 (1x1黑图=空)"),
+}
