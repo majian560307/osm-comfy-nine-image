@@ -59,44 +59,62 @@ class OSMNineImageBranch:
         return tuple(out)
 
 
+def _is_placeholder(img):
+    if img is not None and img.ndim >= 2 and img.shape[-3] == 1 and img.shape[-2] == 1:
+        return True
+    try:
+        if img is not None and img.numel() > 0 and img.numel() <= 8 * 8 * 3 and float(img.abs().max()) == 0.0:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 class OSMNineImageBranchInput(OSMNineImageBranch):
-    """连线模式：9 路 IMAGE 输入直连原生 LoadImage。
-    空槽（未连线 / 1x1 占位图）→ 按 empty_mode 处理：
-      black = 输出自动补一张 1x1 黑图给下游（下游必须收图时用）；
-      block = 返回 ExecutionBlocker，下游整条分支屏蔽（下游可选时用）。"""
+    """屏蔽版：9 路 IMAGE 输入直连原生 LoadImage。
+    空槽（未连线 / 1x1 占位图）→ ExecutionBlocker，下游整条分支屏蔽。
+    用于下游输入可选的场景。"""
 
     @classmethod
     def INPUT_TYPES(cls):
         opt = {}
         for i in range(1, N + 1):
-            opt[f"img_{i}"] = ("IMAGE", {"tooltip": f"槽位{i}：接原生 LoadImage；空/1x1 占位 = 无图。"})
-        opt["empty_mode"] = (["black", "block"], {
-            "default": "black",
-            "tooltip": "black：空槽向下游传 1x1 黑图占位；block：空槽屏蔽下游整条分支。"})
+            opt[f"img_{i}"] = ("IMAGE", {"tooltip": f"槽位{i}：接原生 LoadImage；空/1x1 占位 = 无图，下游分支屏蔽。"})
         return {"required": {}, "optional": opt}
 
-    DESCRIPTION = "9 路 IMAGE 输入分发：空槽(未连线或1x1占位)按 empty_mode 补 1x1 黑图或屏蔽下游分支。"
+    DESCRIPTION = "9 路 IMAGE 输入分发：空槽(未连线或1x1占位)屏蔽下游整条分支。"
 
-    @staticmethod
-    def _is_placeholder(img):
-        if img is not None and img.ndim >= 2 and img.shape[-3] == 1 and img.shape[-2] == 1:
-            return True
-        try:
-            if img is not None and img.numel() > 0 and img.numel() <= 8 * 8 * 3 and float(img.abs().max()) == 0.0:
-                return True
-        except Exception:
-            pass
-        return False
-
-    def dispatch(self, empty_mode="black", **kw):
+    def dispatch(self, **kw):
         out = []
         for i in range(1, N + 1):
             img = kw.get(f"img_{i}", None)
-            if img is None or self._is_placeholder(img):
-                if empty_mode == "block":
-                    out.append(ExecutionBlocker(f"槽位{i}为空，分支屏蔽"))
-                else:
-                    out.append(torch.zeros((1, 1, 1, 3), dtype=torch.float32))
+            if img is None or _is_placeholder(img):
+                out.append(ExecutionBlocker(f"槽位{i}为空，分支屏蔽"))
+            else:
+                out.append(img)
+        return tuple(out)
+
+
+class OSMNineImageFillBlack(OSMNineImageBranch):
+    """补黑版：9 路 IMAGE 输入直连原生 LoadImage。
+    空槽（未连线 / 1x1 占位图）→ 输出合成 1x1 黑图，下游 9 口永远有图。
+    用于下游强制要求每个输入必须有图的场景（如 H3 多图加载节点）。"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        opt = {}
+        for i in range(1, N + 1):
+            opt[f"img_{i}"] = ("IMAGE", {"tooltip": f"槽位{i}：接原生 LoadImage；空/1x1 占位 = 无图，此口自动补 1x1 黑图。"})
+        return {"required": {}, "optional": opt}
+
+    DESCRIPTION = "9 路 IMAGE 输入分发：空槽(未连线或1x1占位)自动向下游补传 1x1 黑图占位。"
+
+    def dispatch(self, **kw):
+        out = []
+        for i in range(1, N + 1):
+            img = kw.get(f"img_{i}", None)
+            if img is None or _is_placeholder(img):
+                out.append(torch.zeros((1, 1, 1, 3), dtype=torch.float32))
             else:
                 out.append(img)
         return tuple(out)
@@ -105,8 +123,10 @@ class OSMNineImageBranchInput(OSMNineImageBranch):
 NODE_CLASS_MAPPINGS = {
     "OSMNineImageBranch": OSMNineImageBranch,
     "OSMNineImageBranchInput": OSMNineImageBranchInput,
+    "OSMNineImageFillBlack": OSMNineImageFillBlack,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "OSMNineImageBranch": ("OSM 九图分发器 (9槽·空槽自动屏蔽)"),
-    "OSMNineImageBranchInput": ("OSM 九图分发器·连线版 (1x1黑图=空)"),
+    "OSMNineImageBranchInput": ("OSM 九图分发器·连线屏蔽版 (空槽断分支)"),
+    "OSMNineImageFillBlack": ("OSM 九图分发器·连线补黑版 (空槽补1x1黑图)"),
 }
