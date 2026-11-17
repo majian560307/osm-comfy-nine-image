@@ -6,6 +6,7 @@
 下游整条分支被内核视为死分支跳过，不执行、不报错、不影响其余分支。
 """
 import os
+import torch
 import folder_paths
 from comfy_execution.graph_utils import ExecutionBlocker
 from nodes import LoadImage
@@ -60,23 +61,26 @@ class OSMNineImageBranch:
 
 class OSMNineImageBranchInput(OSMNineImageBranch):
     """连线模式：9 路 IMAGE 输入直连原生 LoadImage。
-    上游喂 1x1 黑图 = 该槽视为空 → 对应编号输出的下游整条分支屏蔽。"""
+    空槽（未连线 / 1x1 占位图）→ 按 empty_mode 处理：
+      black = 输出自动补一张 1x1 黑图给下游（下游必须收图时用）；
+      block = 返回 ExecutionBlocker，下游整条分支屏蔽（下游可选时用）。"""
 
     @classmethod
     def INPUT_TYPES(cls):
         opt = {}
         for i in range(1, N + 1):
-            opt[f"img_{i}"] = ("IMAGE", {"tooltip": f"槽位{i}：接原生 LoadImage；喂 1x1 黑图 = 空槽，下游分支自动屏蔽。"})
+            opt[f"img_{i}"] = ("IMAGE", {"tooltip": f"槽位{i}：接原生 LoadImage；空/1x1 占位 = 无图。"})
+        opt["empty_mode"] = (["black", "block"], {
+            "default": "black",
+            "tooltip": "black：空槽向下游传 1x1 黑图占位；block：空槽屏蔽下游整条分支。"})
         return {"required": {}, "optional": opt}
 
-    DESCRIPTION = "9 路 IMAGE 输入分发：1x1 黑图占位视为空槽，下游分支自动屏蔽。配合 RH/云端应用的必填原生 LoadImage 使用。"
+    DESCRIPTION = "9 路 IMAGE 输入分发：空槽(未连线或1x1占位)按 empty_mode 补 1x1 黑图或屏蔽下游分支。"
 
     @staticmethod
     def _is_placeholder(img):
-        # 1x1 任意图，或 1x1 大小的任何像素 → 占位
         if img is not None and img.ndim >= 2 and img.shape[-3] == 1 and img.shape[-2] == 1:
             return True
-        # 宽容：小尺寸(<8px)且全黑的图也判占位
         try:
             if img is not None and img.numel() > 0 and img.numel() <= 8 * 8 * 3 and float(img.abs().max()) == 0.0:
                 return True
@@ -84,12 +88,15 @@ class OSMNineImageBranchInput(OSMNineImageBranch):
             pass
         return False
 
-    def dispatch(self, **kw):
+    def dispatch(self, empty_mode="black", **kw):
         out = []
         for i in range(1, N + 1):
             img = kw.get(f"img_{i}", None)
             if img is None or self._is_placeholder(img):
-                out.append(ExecutionBlocker(f"槽位{i}为 1x1 黑图占位，分支屏蔽"))
+                if empty_mode == "block":
+                    out.append(ExecutionBlocker(f"槽位{i}为空，分支屏蔽"))
+                else:
+                    out.append(torch.zeros((1, 1, 1, 3), dtype=torch.float32))
             else:
                 out.append(img)
         return tuple(out)

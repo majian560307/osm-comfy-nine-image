@@ -1,30 +1,22 @@
 # OSM Comfy Nine Image Branch / OSM 九图分发器
 
-Two ComfyUI nodes — **9 image slots, 9 numbered IMAGE outputs**, empty slots **prune their entire downstream branch** (kernel `ExecutionBlocker`, no error, no placeholder execution).
+Two ComfyUI nodes — **9 image slots, 9 numbered IMAGE outputs**, empty slots handled automatically.
+两个 ComfyUI 节点——**9 装载位 + 9 路编号 IMAGE 输出**，空槽自动处理。
 
-两个 ComfyUI 节点——**9 个装载位 + 9 路编号 IMAGE 输出**；空槽的**下游整条分支被内核 `ExecutionBlocker` 屏蔽**：不报错、不执行、不影响其余分支。
-
-## Two variants / 两个变体
+## Variants / 两个变体
 
 ### 1. `OSMNineImageBranch` — 自带上传版
-9 dropdown slots each with its own upload button (same UX as native Load Image). Empty = `(未加载)`.
-9 个独立下拉+上传按钮，空槽 = `(未加载)`。适合本地 ComfyUI。
+9 dropdown slots each with its own upload button; empty = `(未加载)` → downstream branch **pruned** by kernel `ExecutionBlocker`.
+9 个独立下拉+上传按钮；空槽 → 下游整条分支被内核 `ExecutionBlocker` 屏蔽。适合本地 ComfyUI。
 
 ### 2. `OSMNineImageBranchInput` — 连线版（为 RH/云端应用设计）
-9 optional `IMAGE` inputs; wire **native Load Image** nodes into them. **A 1x1 black placeholder image means "empty"** → that slot's downstream branch is pruned.
-9 路可选 IMAGE 输入，接原生 LoadImage。**上游喂 1x1 黑图 = 该槽为空** → 对应分支屏蔽。
+9 optional `IMAGE` inputs wired from native Load Image nodes. A slot counts as **empty** when unconnected or fed a 1x1/black placeholder. The `empty_mode` switch decides what happens downstream:
+9 路可选 IMAGE 输入接原生 LoadImage。未连线或喂入 1x1/纯黑占位图 = **空槽**。`empty_mode` 开关决定下游行为：
 
-Why: cloud app hosts (e.g. RunningHub) only render upload widgets for native Load Image, and native Load Image **hard-fails validation when empty**. Feeding every slot keeps validation happy; the 1x1 sentinel carries the "empty" meaning instead.
-原因：RH 等云平台只给原生 LoadImage 渲染上传控件，而原生 LoadImage 空值会直接触发运行前校验停止。全部喂图让校验永远通过，"空"的语义由 1x1 暗号承载。
-
-## Setup for the wired variant / 连线版用法
-
-1. Put `placeholder_1x1_black.png` (in this repo) into `ComfyUI/input/`.
-   把本仓库的 `placeholder_1x1_black.png` 放进 `ComfyUI/input/`。
-2. Add 9 native Load Image nodes; slots the user doesn't fill keep the placeholder as their value (set it as the node default).
-   放 9 个原生 LoadImage；用户没传的槽保持默认 1x1 黑图。
-3. Wire each LoadImage's IMAGE out into the matching `img_1..img_9` input; use outputs `1..9`.
-   依编号连线，使用编号 1~9 输出口。
+- **`black`（默认）** — empty slots pass a synthesized 1x1 black IMAGE downstream. Use when the downstream node (e.g. H3 multi-image loader) **requires** every input to be an image and errors on missing inputs.
+  空槽自动向后传一张合成 1x1 黑图。当下游（如 H3 多图加载节点）强制要求每个输入必须有图、缺图报错时使用。
+- **`block`** — empty slots return `ExecutionBlocker`; the entire downstream branch is skipped. Use when downstream inputs are optional.
+  空槽返回 `ExecutionBlocker`，下游整条分支跳过执行。下游输入可选时使用。
 
 ## Install / 安装
 
@@ -34,13 +26,13 @@ git clone https://github.com/majian560307/osm-comfy-nine-image.git osm_nine_imag
 ```
 
 Restart ComfyUI → Add Node → search `九图` (category `OSM`).
+For the wired variant you may also drop `placeholder_1x1_black.png` into `ComfyUI/input/` as the native Load Image default (must be RGB PNG — v0.44's pyav loader rejects gray exotic PNGs).
+连线版可将 `placeholder_1x1_black.png` 放入 `ComfyUI/input/` 作为原生 LoadImage 默认值（须 RGB PNG）。
 
 ## Verified / 已验证
 
-Local ComfyUI v0.44: 9-loaded→9 run; 3 real + 6 placeholder→only 3; all-placeholder→none, prompt still success.
-本包 v0.44 实测：全装 9 跑 9；3 实 6 占位只跑 3；全占位一个不跑且整图 success。
-Note: placeholder must be an **RGB** PNG (v0.44's pyav loader rejects 1-bit/gray exotic PNGs). The bundled file is RGB.
-注意：占位图须为 RGB PNG（新版 pyav 拒绝奇葩灰度格式），仓库自带文件已是 RGB。
+Local ComfyUI v0.44 + RunningHub: black mode → all 9 outputs fed (real images pass, empties get 1x1 black), prompt success; block mode → only real-image branches execute.
+本机 v0.44 与 RH 均实测：black 模式 9 口全有图（实图透传、空槽补 1x1 黑）；block 模式仅实图分支执行。
 
 ## License
 
